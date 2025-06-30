@@ -1,0 +1,81 @@
+version: '3.9'
+
+name: mino1
+
+services:
+  db:
+    image: postgres:15
+    container_name: mino1-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../data/postgresql:/var/lib/postgresql/data
+    networks:
+      mino1-net:
+        ipv4_address: 172.21.0.4
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: mino1-pgadmin
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "8088:80"
+    volumes:
+      - ../data/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      mino1-net:
+        ipv4_address: 172.21.0.5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: mino1-backend:dev
+    container_name: mino1-backend
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      - ../backend:/app
+      - /app/node_modules
+    ports:
+      - "8081:3000"
+    networks:
+      mino1-net:
+        ipv4_address: 172.21.0.3
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: mino1-frontend:dev
+    container_name: mino1-frontend
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    ports:
+      - "8080:3000"
+    networks:
+      mino1-net:
+        ipv4_address: 172.21.0.2
+    depends_on:
+      - backend
+
+networks:
+  mino1-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
