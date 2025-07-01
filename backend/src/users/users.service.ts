@@ -1,39 +1,37 @@
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Pool } from 'pg';
 
 export type User = {
-  userId: number;
+  userId: string;
   username: string;
   password: string;
 };
 
 @Injectable()
 export class UsersService {
-  private readonly users = [
-    {
-      userId: 1,
-      username: 'john',
-      password: '$2b$10$example.hash.for.changeme', // hash pre 'changeme'
-    },
-    {
-      userId: 2,
-      username: 'maria',
-      password: '$2b$10$example.hash.for.guess', // hash pre 'guess'
-    },
-  ];
+  private pool: Pool;
 
-  async findOne(username: string): Promise<User | undefined> {
-    return this.users.find(user => user.username === username);
+  constructor() {
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
   }
 
-  async createUser(username: string, password: string): Promise<User> {
+  async findOne(username: string): Promise<User | undefined> {
+    const res = await this.pool.query(
+      'SELECT id as "userId", username, password_hash as password FROM users WHERE username = $1',
+      [username]
+    );
+    return res.rows[0];
+  }
+
+  async createUser(username: string, password: string, email: string): Promise<User> {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = {
-      userId: this.users.length + 1,
-      username,
-      password: hashedPassword,
-    };
-    this.users.push(newUser);
-    return newUser;
+    const res = await this.pool.query(
+      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id as "userId", username, email, password_hash as password',
+      [username, email, hashedPassword],
+    );
+    return res.rows[0];
   }
 }
