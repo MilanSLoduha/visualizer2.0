@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Visualizer } from '@/../components/Visualizer';
+import { useEffect, useState } from 'react';
+import { Visualizer } from '@/../components/Visualizer'
+import Link from 'next/link'
 
 export default function Home() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -28,7 +29,7 @@ export default function Home() {
 
       <select
         value={mode}
-        onChange={(e) => setMode(e.target.value as any)}
+        onChange={(e) => setMode(e.target.value as 'bars' | 'waveform' | 'circle' | 'background')}
         className="mb-4 p-2 text-black"
       >
         <option value="bars">Stĺpce</option>
@@ -38,6 +39,7 @@ export default function Home() {
       </select>
 
       {audioUrl && <Visualizer src={audioUrl} mode={mode} />}
+      <Link href="/login">Login</Link>
     </main>
   );
 }
