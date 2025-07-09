@@ -14,11 +14,15 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
+  // Povolte CORS pre všetky origins (pre development)
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:8081',
+    origin: true, // Alebo ['http://localhost:3000', 'http://localhost:3001']
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
   
   await app.listen(process.env.PORT ?? 8081);
+  console.log('🚀 Backend beží na http://localhost:8081');
 }
 bootstrap();

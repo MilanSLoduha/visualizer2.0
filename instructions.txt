@@ -1,9 +1,9 @@
-npm run dev 
+npm run build 
 
 
 FE 
 
-npm run build
+npm run dev
 npm start
 
 
