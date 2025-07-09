@@ -12,3 +12,8 @@ databaza
 docker compose up -d db pgadmin
 
 http://localhost:8088
+
+
+BE 
+
+npm run start:dev
