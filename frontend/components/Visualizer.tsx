@@ -13,21 +13,28 @@ type Props = {
 
 export function Visualizer({ audioElement, mode, isPlaying, settings, backgroundImage }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const animationRef = useRef<number | null>(null);
   const previousBarHeights = useRef<number[]>([]);
+  const fallingBarHeights = useRef<number[]>([]);
+  const peakHeights = useRef<number[]>([]);
+  const peakTimers = useRef<number[]>([]);
 
-  // Dynamická veľkosť plátna podľa veľkosti okna
+  // Dynamická veľkosť plátna podľa veľkosti kontajnera
   const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
 
   useEffect(() => {
     const updateSize = () => {
-      setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight, // môžeš upraviť podľa potreby
-      });
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setDimensions({
+          width: rect.width,
+          height: rect.height,
+        });
+      }
     };
 
     updateSize();
@@ -120,8 +127,8 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
         // Nové pozičné výpočty
         const startX = canvas.width * (barSettings.position.startX / 100);
         const endX = canvas.width * (barSettings.position.endX / 100);
-        const startY = canvas.height * (barSettings.position.startY / 100);
-        const endY = canvas.height * (barSettings.position.endY / 100);
+        const startY = canvas.height * ((barSettings.position.startY ?? 0) / 100);
+        const endY = canvas.height * ((barSettings.position.endY ?? 100) / 100);
         
         const canvasWidth = Math.abs(endX - startX);
         const canvasHeight = Math.abs(endY - startY);
@@ -147,19 +154,19 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
         const actualBarsToShow = Math.min(maxDisplayBars, frequencyData.length);
         
         // Debug informácie (môžete odstrániť neskôr)
-        if (Math.random() < 0.1) { // Loguj častejšie pre debugging
+        if (Math.random() < 0.02) { // Znížené logovanie
+          console.log('Canvas Debug:', {
+            canvasWidth: canvas.width,
+            canvasHeight: canvas.height,
+            availableHeight: Math.abs(endY - startY),
+            canvasHeightScale: Math.max(canvasHeight / 2, 200)
+          });
           console.log('Audio Data Debug:', {
             isPlaying: isPlaying,
-            dataArraySum: dataArray.reduce((a, b) => a + b, 0),
             maxValue: Math.max(...dataArray),
-            fftSize: barSettings.fftSize,
-            realBarsCount: realBarsCount,
             frequencyDataLength: frequencyData.length,
             actualBarsToShow: actualBarsToShow,
-            canvasWidth: canvasWidth,
-            barWidth: barWidth,
-            gap: gap,
-            maxDisplayBars: maxDisplayBars
+            multiplier: barSettings.barHeight.multiplier
           });
         }
         
@@ -168,18 +175,27 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
         
         // Pridanie reálnych stĺpcov
         for (let i = 0; i < actualBarsToShow; i++) {
-          let rawHeight = (frequencyData[i] / 255) * barSettings.barHeight.multiplier * 100;
+          // Získaj základnú hodnotu (0-1)
+          let normalizedValue = frequencyData[i] / 255;
           
-          // Debug pre prvé pár stĺpcov
-          if (i < 5 && Math.random() < 0.1) {
-            console.log(`Bar ${i} calculation:`, {
-              originalValue: frequencyData[i],
-              afterScale: rawHeight,
-              dataLength: frequencyData.length
-            });
+          // Kvadratické škálovanie - nízke hodnoty budú ešte nižšie, vysoké výrazne vyššie
+          normalizedValue = normalizedValue * normalizedValue; // na druhú
+          
+          // Vynásob multiplier a škáluj na pixely - použij výška canvasu namiesto hardkódovanej hodnoty
+          const canvasHeightScale = Math.max(canvasHeight / 2, 200); // Minimálne 200 pre škálovanie
+          let rawHeight = normalizedValue * barSettings.barHeight.multiplier * canvasHeightScale;
+          
+          // Threshold - hodnoty pod 5 pixelov nastav na 0
+          if (rawHeight < 5) {
+            rawHeight = 0;
           }
           
-          // Logaritmické škálovanie
+          // Debug pre prvé pár stĺpcov
+          if (i < 3 && Math.random() < 0.02) {
+            console.log(`Bar ${i}: freq=${frequencyData[i]} → height=${rawHeight.toFixed(1)}px`);
+          }
+          
+          // Logaritmické škálovanie (dodatočné, ak je zapnuté)
           if (barSettings.barHeight.logarithmic && rawHeight > 0) {
             rawHeight = rawHeight * Math.log10(rawHeight + 1);
           }
@@ -187,9 +203,9 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
           // Aplikácia limitov
           rawHeight = Math.max(barSettings.barHeight.minHeight, Math.min(barSettings.barHeight.maxHeight, rawHeight));
           
-          // Debug finálnej výšky
-          if (i < 5 && Math.random() < 0.1) {
-            console.log(`Bar ${i} final height:`, rawHeight);
+          // Debug finálnej výšky - znížené logovanie
+          if (i < 3 && Math.random() < 0.01) {
+            console.log(`Bar ${i} final: ${rawHeight.toFixed(1)}px`);
           }
           
           newBarHeights.push(rawHeight);
@@ -239,16 +255,66 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
         // Uloženie pre ďalší frame
         previousBarHeights.current = [...newBarHeights];
         
+        // Falling bars logika
+        let finalBarHeights = newBarHeights;
+        if (barSettings.fallingBars.enabled) {
+          // Inicializácia arrays ak sú prázdne alebo sa zmenila dĺžka
+          if (fallingBarHeights.current.length !== newBarHeights.length) {
+            fallingBarHeights.current = [...newBarHeights];
+            peakHeights.current = [...newBarHeights];
+            peakTimers.current = new Array(newBarHeights.length).fill(0);
+          }
+          
+          for (let i = 0; i < newBarHeights.length; i++) {
+            const currentHeight = newBarHeights[i];
+            const fallingHeight = fallingBarHeights.current[i];
+            
+            // Ak je nová hodnota vyššia, okamžite ju nastaviť
+            if (currentHeight > fallingHeight) {
+              fallingBarHeights.current[i] = currentHeight;
+              // Aktualizuj peak ak je potreba
+              if (currentHeight > peakHeights.current[i]) {
+                peakHeights.current[i] = currentHeight;
+                peakTimers.current[i] = 30; // Peak sa zobrazí 30 framov (cca 0.5s)
+              }
+            } else {
+              // Nech stĺpec padá gravitáciou
+              fallingBarHeights.current[i] = Math.max(
+                currentHeight, 
+                fallingHeight - (fallingHeight * barSettings.fallingBars.gravity * 0.1)
+              );
+            }
+            
+            // Aktualizuj peak timer
+            if (peakTimers.current[i] > 0) {
+              peakTimers.current[i]--;
+            } else {
+              // Peak timer vypršal, nech peak tiež pomaly padá
+              peakHeights.current[i] = Math.max(
+                fallingBarHeights.current[i],
+                peakHeights.current[i] - (peakHeights.current[i] * barSettings.fallingBars.gravity * 0.05)
+              );
+            }
+          }
+          
+          finalBarHeights = fallingBarHeights.current;
+        }
+        
         // Kreslenie podľa typu znázornenia a smeru
         if (barSettings.renderStyle.type === 'bars') {
           // Klasické stĺpce
-          renderBars(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight, barWidth, gap);
+          renderBars(ctx!, finalBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight, barWidth, gap);
+          
+          // Kresli peak hodnoty ak sú zapnuté
+          if (barSettings.fallingBars.enabled && barSettings.fallingBars.peak) {
+            renderPeaks(ctx!, peakHeights.current, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight, barWidth, gap);
+          }
         } else if (barSettings.renderStyle.type === 'dots') {
           // Bodky
-          renderDots(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
+          renderDots(ctx!, finalBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
         } else if (barSettings.renderStyle.type === 'lines') {
           // Čiary
-          renderLines(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
+          renderLines(ctx!, finalBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
         }
       } else if (mode === 'waveform') {
         const waveSettings = settings.waveform;
@@ -401,6 +467,15 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
   const renderBars = (ctx: CanvasRenderingContext2D, heights: number[], settings: any, startX: number, startY: number, endX: number, endY: number, canvasWidth: number, canvasHeight: number, barWidth: number, gap: number) => {
     const direction = settings.renderStyle.direction;
     const centerY = startY + (endY - startY) / 2;
+    
+    // Debug render info - znížené logovanie
+    if (Math.random() < 0.01) {
+      console.log('Render Debug:', {
+        maxBarHeight: Math.max(...heights),
+        avgBarHeight: heights.reduce((a, b) => a + b, 0) / heights.length,
+        nonZeroBars: heights.filter(h => h > 0).length
+      });
+    }
     
     for (let i = 0; i < heights.length; i++) {
       const barHeight = heights[i];
@@ -590,13 +665,61 @@ export function Visualizer({ audioElement, mode, isPlaying, settings, background
     }
   };
 
+  const renderPeaks = (ctx: CanvasRenderingContext2D, peakHeights: number[], settings: any, startX: number, startY: number, endX: number, endY: number, canvasWidth: number, canvasHeight: number, barWidth: number, gap: number) => {
+    const direction = settings.renderStyle.direction;
+    const centerY = startY + (endY - startY) / 2;
+    
+    ctx.strokeStyle = settings.colors.primary;
+    ctx.lineWidth = 2;
+    
+    for (let i = 0; i < peakHeights.length; i++) {
+      const peakHeight = peakHeights[i];
+      const x = startX + i * (barWidth + gap);
+      
+      if (direction === 'up') {
+        // Peak čiarka na vrchole stĺpca
+        const y = endY - peakHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + barWidth, y);
+        ctx.stroke();
+        
+      } else if (direction === 'down') {
+        // Peak čiarka na spodku stĺpca
+        const y = startY + peakHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + barWidth, y);
+        ctx.stroke();
+        
+      } else if (direction === 'both') {
+        // Peak čiarky na oboch stranách
+        const halfHeight = peakHeight / 2;
+        
+        // Horný peak
+        const yUp = centerY - halfHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, yUp);
+        ctx.lineTo(x + barWidth, yUp);
+        ctx.stroke();
+        
+        // Dolný peak
+        const yDown = centerY + halfHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, yDown);
+        ctx.lineTo(x + barWidth, yDown);
+        ctx.stroke();
+      }
+    }
+  };
+
   return (
-    <div className="relative w-full">
+    <div ref={containerRef} className="relative w-full h-full">
       <canvas
         ref={canvasRef}
         width={dimensions.width}
         height={dimensions.height}
-        className="w-full border border-white cursor-pointer"
+        className="w-full h-full cursor-pointer"
         onClick={handleCanvasClick}
       />
       {!isPlaying && (

@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Visualizer } from '@/../components/Visualizer';
 import { VisualizerSettingsPanel } from '@/../components/VisualizerSettingsPanel';
+import { AudioControls } from '@/../components/AudioControls';
 import { VisualizerSettings, VisualizerMode, defaultSettings } from '@/types/visualizer';
 import Link from 'next/link';
 
@@ -16,6 +17,7 @@ export default function Home() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  const [backgroundColor, setBackgroundColor] = useState<string>('#000000');
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -96,8 +98,7 @@ export default function Home() {
     }
   };
 
-  const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(event.target.value);
+  const handleSeek = (time: number) => {
     if (audioRef.current) {
       audioRef.current.currentTime = time;
       setCurrentTime(time);
@@ -129,6 +130,10 @@ export default function Home() {
     }
   };
 
+  const handleBackgroundColorChange = (color: string) => {
+    setBackgroundColor(color);
+  };
+
   const formatTime = (time: number) => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
@@ -144,20 +149,19 @@ export default function Home() {
         onSettingsChange={setSettings}
         onModeChange={setMode}
         onBackgroundImageChange={handleBackgroundImageChange}
+        onBackgroundColorChange={handleBackgroundColorChange}
       />
 
       {/* Hlavná oblasť s vizualizérom */}
       <div className="flex-1 flex flex-col">
         {/* Oblasť vizualizácie */}
-        <div className="flex-1 bg-black relative" style={{
+        <div className="flex-1 relative" style={{
           backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined,
+          backgroundColor: backgroundImage ? undefined : backgroundColor,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat'
         }}>
-          {backgroundImage && (
-            <div className="absolute inset-0 bg-black bg-opacity-50"></div>
-          )}
           {audioUrl ? (
             <>
               <audio 
@@ -185,7 +189,7 @@ export default function Home() {
               />
             </>
           ) : (
-            <div className="h-full flex items-center justify-center">
+            <div className="h-full flex items-center justify-center bg-black">
               <div className="text-center text-white">
                 <svg className="mx-auto h-16 w-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 48 48">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" />
@@ -210,6 +214,18 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Audio Controls Panel */}
+        <AudioControls
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          volume={volume}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onVolumeChange={handleVolumeChange}
+          onSeekBy={handleSeekBy}
+        />
       </div>
     </div>
   );

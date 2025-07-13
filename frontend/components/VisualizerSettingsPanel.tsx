@@ -8,9 +8,10 @@ interface VisualizerSettingsProps {
   onSettingsChange: (newSettings: VisualizerSettings) => void;
   onModeChange: (mode: VisualizerMode) => void;
   onBackgroundImageChange?: (file: File | null) => void;
+  onBackgroundColorChange?: (color: string) => void;
 }
 
-export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onModeChange, onBackgroundImageChange }: VisualizerSettingsProps) {
+export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onModeChange, onBackgroundImageChange, onBackgroundColorChange }: VisualizerSettingsProps) {
   const updateBarSettings = (key: keyof typeof settings.bars, value: any) => {
     const newSettings = {
       ...settings,
@@ -54,6 +55,50 @@ export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onMo
     };
     onSettingsChange(newSettings);
   };
+
+  const renderBackgroundControls = () => (
+    <div className="mb-6">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Pozadie</h3>
+      
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Farba pozadia
+        </label>
+        <div className="flex items-center space-x-2">
+          <input
+            type="color"
+            defaultValue="#000000"
+            onChange={(e) => onBackgroundColorChange?.(e.target.value)}
+            className="w-10 h-10 rounded border border-gray-300"
+          />
+          <span className="text-sm text-gray-600">Predvolená farba</span>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Obrázok pozadia
+        </label>
+        <div className="space-y-2">
+          <label className="inline-block cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors w-full text-center">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => onBackgroundImageChange?.(e.target.files?.[0] || null)}
+              className="sr-only"
+            />
+            📷 Nahrať obrázok
+          </label>
+          <button
+            onClick={() => onBackgroundImageChange?.(null)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            🗑️ Odstrániť obrázok
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const renderModeSelector = () => (
     <div className="mb-6">
@@ -251,14 +296,14 @@ export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onMo
       {renderSlider(
         'Šírka stĺpca (px)',
         settings.bars.barWidth,
-        1, 20, 0.5,
+        1, 50, 0.5,
         (value) => updateBarSettings('barWidth', value)
       )}
 
       {renderSlider(
         'Medzera medzi stĺpcami (px)',
         settings.bars.gap,
-        0, 20, 0.5,
+        0, 50, 0.5,
         (value) => updateBarSettings('gap', value)
       )}
 
@@ -399,6 +444,48 @@ export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onMo
           <option value="both">Oboje ↕</option>
         </select>
       </div>
+
+      <h5 className="text-sm font-semibold text-gray-700 mt-6">Falling Bars Efekt</h5>
+      <div className="mb-4">
+        <label className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            checked={settings.bars.fallingBars.enabled}
+            onChange={(e) => updateBarSettings('fallingBars', { ...settings.bars.fallingBars, enabled: e.target.checked })}
+            className="rounded border-gray-300"
+          />
+          <span className="text-sm font-medium text-gray-700">Zapnúť falling bars (gravitácia)</span>
+        </label>
+        <div className="text-xs text-gray-500 mt-1">
+          Stĺpce budú pomaly padať dole keď zvuk ztíši
+        </div>
+      </div>
+
+      {settings.bars.fallingBars.enabled && (
+        <>
+          {renderSlider(
+            'Gravitácia (rýchlosť padania)',
+            settings.bars.fallingBars.gravity,
+            0.1, 1, 0.05,
+            (value) => updateBarSettings('fallingBars', { ...settings.bars.fallingBars, gravity: value })
+          )}
+
+          <div className="mb-4">
+            <label className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={settings.bars.fallingBars.peak}
+                onChange={(e) => updateBarSettings('fallingBars', { ...settings.bars.fallingBars, peak: e.target.checked })}
+                className="rounded border-gray-300"
+              />
+              <span className="text-sm font-medium text-gray-700">Zobraziť peak hodnoty</span>
+            </label>
+            <div className="text-xs text-gray-500 mt-1">
+              Malé čiarky na vrchole stĺpcov pre maximálne hodnoty
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -672,6 +759,10 @@ export function VisualizerSettingsPanel({ mode, settings, onSettingsChange, onMo
     <div className="w-80 bg-white shadow-lg border-r border-gray-200 h-screen flex flex-col">
       <div className="flex-1 p-6" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 20px)' }}>
         <h2 className="text-xl font-bold text-gray-900 mb-6">Nastavenia vizualizácie</h2>
+        
+        {renderBackgroundControls()}
+        
+        <hr className="my-6 border-gray-200" />
         
         {renderModeSelector()}
         

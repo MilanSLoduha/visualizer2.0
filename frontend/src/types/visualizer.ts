@@ -13,8 +13,8 @@ export interface VisualizerSettings {
     position: {
       startX: number;  // Počiatočná X pozícia (%)
       endX: number;    // Koncová X pozícia (%)
-      startY: number;  // Počiatočná Y pozícia (%)
-      endY: number;    // Koncová Y pozícia (%)
+      startY?: number;  // Počiatočná Y pozícia (%) - voliteľné
+      endY?: number;    // Koncová Y pozícia (%) - voliteľné
     };
     renderStyle: {
       type: 'bars' | 'dots' | 'lines'; // Typ znázornenia
@@ -31,6 +31,11 @@ export interface VisualizerSettings {
     smoothing: {
       neighborSmoothing: number; // 0-10, počet susedných stĺpcov na priemerovanie
       temporalSmoothing: number; // 0-1, vyhladzovanie s predchádzajúcou hodnotou
+    };
+    fallingBars: {
+      enabled: boolean; // Zapnutie/vypnutie falling bars efektu
+      gravity: number; // 0.1-1, rýchlosť padania (gravitácia)
+      peak: boolean; // Zobrazenie peak hodnôt
     };
   };
   waveform: {
@@ -101,11 +106,11 @@ export const defaultSettings: VisualizerSettings = {
     frequencyRange: { min: 0, max: 10000 },
     barHeight: { 
       multiplier: 2, 
-      minHeight: 2, 
-      maxHeight: 400,
+      minHeight: 1, 
+      maxHeight: 4000,
       logarithmic: false
     },
-    position: { startX: 0, endX: 100, startY: 80, endY: 100 },
+    position: { startX: 0, endX: 100 },
     renderStyle: { type: 'bars', direction: 'up' },
     colors: { primary: '#ff3232', secondary: '#ff6666', gradient: false },
     barWidth: 4,
@@ -114,6 +119,11 @@ export const defaultSettings: VisualizerSettings = {
     smoothing: {
       neighborSmoothing: 1,
       temporalSmoothing: 0.7
+    },
+    fallingBars: {
+      enabled: false,
+      gravity: 0.3,
+      peak: true
     }
   },
   waveform: {
