@@ -1,19 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { VisualizerSettings, VisualizerMode } from '@/types/visualizer';
 
 type Props = {
   audioElement: HTMLAudioElement | null;
-  mode: 'bars' | 'waveform' | 'circle' | 'background';
+  mode: VisualizerMode;
   isPlaying: boolean;
+  settings: VisualizerSettings;
+  backgroundImage?: string | null;
 };
 
-export function Visualizer({ audioElement, mode, isPlaying }: Props) {
+export function Visualizer({ audioElement, mode, isPlaying, settings, backgroundImage }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const animationRef = useRef<number | null>(null);
+  const previousBarHeights = useRef<number[]>([]);
 
   // Dynamická veľkosť plátna podľa veľkosti okna
   const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
@@ -38,20 +42,30 @@ export function Visualizer({ audioElement, mode, isPlaying }: Props) {
       try {
         if (!audioContextRef.current) {
           audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          console.log('Created new AudioContext');
         }
 
         const audioCtx = audioContextRef.current;
+        console.log('AudioContext state:', audioCtx.state);
 
         if (audioCtx.state === 'suspended') {
+          console.log('Resuming suspended AudioContext...');
           await audioCtx.resume();
+          console.log('AudioContext resumed, new state:', audioCtx.state);
         }
 
         if (!analyserRef.current && !sourceRef.current) {
+          console.log('Creating audio source and analyser...');
           sourceRef.current = audioCtx.createMediaElementSource(audioElement);
           analyserRef.current = audioCtx.createAnalyser();
           sourceRef.current.connect(analyserRef.current);
           analyserRef.current.connect(audioCtx.destination);
-          analyserRef.current.fftSize = 4096;
+          analyserRef.current.fftSize = settings.bars.fftSize;
+          console.log('Audio setup complete with fftSize:', settings.bars.fftSize);
+        } else if (analyserRef.current) {
+          // Aktualizuj FFT size ak sa zmenil
+          analyserRef.current.fftSize = settings.bars.fftSize;
+          console.log('Updated fftSize to:', settings.bars.fftSize);
         }
       } catch (error) {
         console.error('Audio context error:', error);
@@ -59,17 +73,26 @@ export function Visualizer({ audioElement, mode, isPlaying }: Props) {
     };
 
     initAudio();
-  }, [audioElement]);
+  }, [audioElement, settings.bars.fftSize]);
 
   useEffect(() => {
+    console.log('Visualizer effect triggered:', { 
+      isPlaying, 
+      mode, 
+      hasAnalyser: !!analyserRef.current,
+      hasAudioElement: !!audioElement 
+    });
+    
     if (isPlaying && analyserRef.current) {
+      console.log('Starting animation...');
       startAnimation();
     } else {
+      console.log('Stopping animation...');
       stopAnimation();
     }
 
     return () => stopAnimation();
-  }, [isPlaying, mode]);
+  }, [isPlaying, mode, settings]);
 
   const startAnimation = () => {
     if (!analyserRef.current || !canvasRef.current) return;
@@ -83,50 +106,270 @@ export function Visualizer({ audioElement, mode, isPlaying }: Props) {
     const dataArray = new Uint8Array(bufferLength);
 
     function animate() {
-      if (!isPlaying) return;
+      if (!isPlaying) {
+        console.log('Animation stopped - isPlaying is false');
+        return;
+      }
 
       analyser.getByteFrequencyData(dataArray);
       ctx!.clearRect(0, 0, canvas.width, canvas.height);
 
       if (mode === 'bars') {
-        const barWidth = (canvas.width / bufferLength) * 2.5;
-        let x = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          const barHeight = dataArray[i] * dataArray[i] / 80;
-          ctx!.fillStyle = 'rgb(255, 50, 50)';
-          ctx!.fillRect(x, canvas.height - barHeight / 2 - 10, barWidth, barHeight / 2);
-          x += barWidth + 1;
+        const barSettings = settings.bars;
+        
+        // Nové pozičné výpočty
+        const startX = canvas.width * (barSettings.position.startX / 100);
+        const endX = canvas.width * (barSettings.position.endX / 100);
+        const startY = canvas.height * (barSettings.position.startY / 100);
+        const endY = canvas.height * (barSettings.position.endY / 100);
+        
+        const canvasWidth = Math.abs(endX - startX);
+        const canvasHeight = Math.abs(endY - startY);
+        
+        const barWidth = barSettings.barWidth;
+        const gap = barSettings.gap;
+        
+        // Počet reálnych stĺpcov z FFT - toto je skutočný počet frekvenčných pásiem
+        const realBarsCount = analyser.frequencyBinCount; // Toto už je fftSize / 2
+        
+        // Filtrovanie frekvenčného rozsahu
+        const nyquist = audioContextRef.current?.sampleRate ? audioContextRef.current.sampleRate / 2 : 24000; // Zvýšené z 22050
+        const minFreqIndex = Math.floor((barSettings.frequencyRange.min / nyquist) * realBarsCount);
+        const maxFreqIndex = Math.floor((barSettings.frequencyRange.max / nyquist) * realBarsCount);
+        
+        // Získanie dát len z požadovaného frekvenčného rozsahu
+        const startIndex = Math.max(0, minFreqIndex);
+        const endIndex = Math.min(maxFreqIndex, realBarsCount);
+        const frequencyData = dataArray.slice(startIndex, endIndex);
+        
+        // Výpočet koľko stĺpcov sa zmestí na obrazovku
+        const maxDisplayBars = Math.floor(canvasWidth / (barWidth + gap));
+        const actualBarsToShow = Math.min(maxDisplayBars, frequencyData.length);
+        
+        // Debug informácie (môžete odstrániť neskôr)
+        if (Math.random() < 0.1) { // Loguj častejšie pre debugging
+          console.log('Audio Data Debug:', {
+            isPlaying: isPlaying,
+            dataArraySum: dataArray.reduce((a, b) => a + b, 0),
+            maxValue: Math.max(...dataArray),
+            fftSize: barSettings.fftSize,
+            realBarsCount: realBarsCount,
+            frequencyDataLength: frequencyData.length,
+            actualBarsToShow: actualBarsToShow,
+            canvasWidth: canvasWidth,
+            barWidth: barWidth,
+            gap: gap,
+            maxDisplayBars: maxDisplayBars
+          });
+        }
+        
+        // Vytvorenie novej sady výšok stĺpcov
+        const newBarHeights: number[] = [];
+        
+        // Pridanie reálnych stĺpcov
+        for (let i = 0; i < actualBarsToShow; i++) {
+          let rawHeight = (frequencyData[i] / 255) * barSettings.barHeight.multiplier * 100;
+          
+          // Debug pre prvé pár stĺpcov
+          if (i < 5 && Math.random() < 0.1) {
+            console.log(`Bar ${i} calculation:`, {
+              originalValue: frequencyData[i],
+              afterScale: rawHeight,
+              dataLength: frequencyData.length
+            });
+          }
+          
+          // Logaritmické škálovanie
+          if (barSettings.barHeight.logarithmic && rawHeight > 0) {
+            rawHeight = rawHeight * Math.log10(rawHeight + 1);
+          }
+          
+          // Aplikácia limitov
+          rawHeight = Math.max(barSettings.barHeight.minHeight, Math.min(barSettings.barHeight.maxHeight, rawHeight));
+          
+          // Debug finálnej výšky
+          if (i < 5 && Math.random() < 0.1) {
+            console.log(`Bar ${i} final height:`, rawHeight);
+          }
+          
+          newBarHeights.push(rawHeight);
+        }
+        
+        // Susedné vyhladzovanie - pridanie interpolovaných stĺpcov medzi reálne
+        if (barSettings.smoothing.neighborSmoothing > 0) {
+          const smoothedHeights: number[] = [];
+          
+          for (let i = 0; i < newBarHeights.length; i++) {
+            // Pridaj reálny stĺpec
+            smoothedHeights.push(newBarHeights[i]);
+            
+            // Pridaj vyhladzovacie stĺpce medzi aktuálny a ďalší (ak existuje)
+            if (i < newBarHeights.length - 1) {
+              const currentHeight = newBarHeights[i];
+              const nextHeight = newBarHeights[i + 1];
+              
+              // Pridaj určitý počet interpolovaných stĺpcov
+              const interpolationSteps = Math.min(barSettings.smoothing.neighborSmoothing, 5); // Max 5 aby sa to nepretiahlo
+              
+              for (let j = 1; j <= interpolationSteps; j++) {
+                const ratio = j / (interpolationSteps + 1);
+                const interpolatedHeight = currentHeight + (nextHeight - currentHeight) * ratio;
+                smoothedHeights.push(interpolatedHeight);
+              }
+            }
+          }
+          
+          // Skontroluj či sa všetky zmestia na obrazovku
+          const maxBarsWithSmoothing = Math.floor(canvasWidth / (barWidth + gap));
+          if (smoothedHeights.length > maxBarsWithSmoothing) {
+            smoothedHeights.splice(maxBarsWithSmoothing);
+          }
+          
+          newBarHeights.splice(0, newBarHeights.length, ...smoothedHeights);
+        }
+        
+        // Časové vyhladzovanie s predchádzajúcimi hodnotami
+        if (barSettings.smoothing.temporalSmoothing > 0 && previousBarHeights.current.length === newBarHeights.length) {
+          for (let i = 0; i < newBarHeights.length; i++) {
+            newBarHeights[i] = previousBarHeights.current[i] * barSettings.smoothing.temporalSmoothing + 
+                               newBarHeights[i] * (1 - barSettings.smoothing.temporalSmoothing);
+          }
+        }
+        
+        // Uloženie pre ďalší frame
+        previousBarHeights.current = [...newBarHeights];
+        
+        // Kreslenie podľa typu znázornenia a smeru
+        if (barSettings.renderStyle.type === 'bars') {
+          // Klasické stĺpce
+          renderBars(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight, barWidth, gap);
+        } else if (barSettings.renderStyle.type === 'dots') {
+          // Bodky
+          renderDots(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
+        } else if (barSettings.renderStyle.type === 'lines') {
+          // Čiary
+          renderLines(ctx!, newBarHeights, barSettings, startX, startY, endX, endY, canvasWidth, canvasHeight);
         }
       } else if (mode === 'waveform') {
+        const waveSettings = settings.waveform;
+        const canvasWidth = canvas.width * (waveSettings.position.width / 100);
+        const canvasHeight = canvas.height * (waveSettings.position.height / 100);
+        const startX = canvas.width * (waveSettings.position.x / 100);
+        const startY = canvas.height * (waveSettings.position.y / 100);
+        
         analyser.getByteTimeDomainData(dataArray);
         ctx!.beginPath();
-        ctx!.lineWidth = 2;
-        ctx!.strokeStyle = 'lime';
-        const sliceWidth = canvas.width / bufferLength;
-        let x = 0;
+        ctx!.lineWidth = waveSettings.lineWidth;
+        ctx!.strokeStyle = waveSettings.colors.lineColor;
+        
+        const sliceWidth = canvasWidth / bufferLength;
+        let x = startX;
+        
         for (let i = 0; i < bufferLength; i++) {
-          const y = (dataArray[i] / 128.0) * canvas.height / 2;
-          if (i === 0) ctx!.moveTo(x, y);
-          else ctx!.lineTo(x, y);
+          const amplitude = (dataArray[i] / 128.0 - 1) * (waveSettings.amplitude.max - waveSettings.amplitude.min) / 2;
+          const y = startY + canvasHeight / 2 + amplitude;
+          
+          if (i === 0) {
+            ctx!.moveTo(x, y);
+          } else {
+            ctx!.lineTo(x, y);
+          }
           x += sliceWidth;
         }
         ctx!.stroke();
+        
+        if (waveSettings.colors.fillGradient) {
+          const gradient = ctx!.createLinearGradient(0, startY, 0, startY + canvasHeight);
+          gradient.addColorStop(0, waveSettings.colors.lineColor + '80');
+          gradient.addColorStop(1, waveSettings.colors.backgroundColor);
+          ctx!.fillStyle = gradient;
+          ctx!.fill();
+        }
       } else if (mode === 'circle') {
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const radius = 100;
+        const circleSettings = settings.circle;
+        const centerX = canvas.width * (circleSettings.position.centerX / 100);
+        const centerY = canvas.height * (circleSettings.position.centerY / 100);
+        const baseRadius = circleSettings.radius.min;
+        const maxRadius = circleSettings.radius.max;
+        
+        ctx!.save();
+        ctx!.translate(centerX, centerY);
+        if (circleSettings.rotationSpeed !== 0) {
+          ctx!.rotate(Date.now() * circleSettings.rotationSpeed * 0.001);
+        }
+        
         for (let i = 0; i < bufferLength; i++) {
           const angle = (i / bufferLength) * 2 * Math.PI;
-          const r = radius + dataArray[i] / 4;
-          const x = centerX + r * Math.cos(angle);
-          const y = centerY + r * Math.sin(angle);
-          ctx!.fillStyle = `hsl(${(i * 360) / bufferLength}, 100%, 50%)`;
-          ctx!.fillRect(x, y, 2, 2);
+          const amplitude = dataArray[i] / 255;
+          const radius = baseRadius + amplitude * (maxRadius - baseRadius);
+          const x = radius * Math.cos(angle);
+          const y = radius * Math.sin(angle);
+          
+          if (circleSettings.colors.useSpectrum) {
+            const hue = (i * 360) / bufferLength;
+            ctx!.fillStyle = `hsl(${hue}, ${circleSettings.colors.saturation}%, ${circleSettings.colors.brightness}%)`;
+          } else {
+            const colorIndex = i % circleSettings.colors.customColors.length;
+            ctx!.fillStyle = circleSettings.colors.customColors[colorIndex];
+          }
+          
+          ctx!.fillRect(x - circleSettings.pointSize / 2, y - circleSettings.pointSize / 2, circleSettings.pointSize, circleSettings.pointSize);
         }
+        
+        ctx!.restore();
       } else if (mode === 'background') {
+        const bgSettings = settings.background;
         const avg = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-        const color = `rgb(${avg + 50}, ${100 - avg}, ${200 - avg})`;
-        canvas.style.backgroundColor = color;
+        const normalizedAvg = (avg / 255) * bgSettings.sensitivity * bgSettings.intensity;
+        
+        switch (bgSettings.effect) {
+          case 'solid':
+            const intensity = Math.min(255, normalizedAvg * 255);
+            const baseColor = bgSettings.colors.baseColor;
+            const accentColor = bgSettings.colors.accentColor;
+            
+            // Mix base and accent colors based on intensity
+            const baseR = parseInt(baseColor.slice(1, 3), 16);
+            const baseG = parseInt(baseColor.slice(3, 5), 16);
+            const baseB = parseInt(baseColor.slice(5, 7), 16);
+            const accentR = parseInt(accentColor.slice(1, 3), 16);
+            const accentG = parseInt(accentColor.slice(3, 5), 16);
+            const accentB = parseInt(accentColor.slice(5, 7), 16);
+            
+            const mixR = Math.floor(baseR + (accentR - baseR) * normalizedAvg);
+            const mixG = Math.floor(baseG + (accentG - baseG) * normalizedAvg);
+            const mixB = Math.floor(baseB + (accentB - baseB) * normalizedAvg);
+            
+            canvas.style.backgroundColor = `rgb(${mixR}, ${mixG}, ${mixB})`;
+            break;
+            
+          case 'gradient':
+            const gradient = ctx!.createRadialGradient(
+              canvas.width / 2, canvas.height / 2, 0,
+              canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) / 2
+            );
+            gradient.addColorStop(0, bgSettings.colors.accentColor + Math.floor(normalizedAvg * 255).toString(16).padStart(2, '0'));
+            gradient.addColorStop(1, bgSettings.colors.baseColor);
+            ctx!.fillStyle = gradient;
+            ctx!.fillRect(0, 0, canvas.width, canvas.height);
+            break;
+            
+          case 'pulse':
+            const pulseIntensity = Math.sin(Date.now() * 0.01) * normalizedAvg;
+            canvas.style.backgroundColor = bgSettings.colors.baseColor;
+            ctx!.fillStyle = bgSettings.colors.accentColor + Math.floor(Math.abs(pulseIntensity) * 255).toString(16).padStart(2, '0');
+            ctx!.fillRect(0, 0, canvas.width, canvas.height);
+            break;
+            
+          case 'wave':
+            canvas.style.backgroundColor = bgSettings.colors.baseColor;
+            for (let x = 0; x < canvas.width; x += 10) {
+              const waveHeight = Math.sin((x + Date.now() * 0.01) * 0.01) * normalizedAvg * canvas.height * 0.5;
+              ctx!.fillStyle = bgSettings.colors.accentColor + '80';
+              ctx!.fillRect(x, canvas.height / 2 - waveHeight / 2, 8, waveHeight);
+            }
+            break;
+        }
       }
 
       animationRef.current = requestAnimationFrame(animate);
@@ -142,13 +385,219 @@ export function Visualizer({ audioElement, mode, isPlaying }: Props) {
     }
   };
 
+  const handleCanvasClick = async () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      console.log('Attempting to resume AudioContext from user interaction...');
+      try {
+        await audioContextRef.current.resume();
+        console.log('AudioContext resumed successfully');
+      } catch (error) {
+        console.error('Failed to resume AudioContext:', error);
+      }
+    }
+  };
+
+  // Render funkcie pre rôzne typy znázornenia
+  const renderBars = (ctx: CanvasRenderingContext2D, heights: number[], settings: any, startX: number, startY: number, endX: number, endY: number, canvasWidth: number, canvasHeight: number, barWidth: number, gap: number) => {
+    const direction = settings.renderStyle.direction;
+    const centerY = startY + (endY - startY) / 2;
+    
+    for (let i = 0; i < heights.length; i++) {
+      const barHeight = heights[i];
+      const x = startX + i * (barWidth + gap);
+      
+      if (direction === 'up') {
+        // Stĺpce rastú nahor
+        const y = endY - barHeight;
+        const width = barWidth;
+        const height = barHeight;
+        
+        if (settings.colors.gradient) {
+          const gradient = ctx.createLinearGradient(0, y, 0, y + height);
+          gradient.addColorStop(0, settings.colors.primary);
+          gradient.addColorStop(1, settings.colors.secondary);
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = settings.colors.primary;
+        }
+        
+        ctx.fillRect(x, y, width, height);
+        
+      } else if (direction === 'down') {
+        // Stĺpce rastú nadol
+        const y = startY;
+        const width = barWidth;
+        const height = barHeight;
+        
+        if (settings.colors.gradient) {
+          const gradient = ctx.createLinearGradient(0, y, 0, y + height);
+          gradient.addColorStop(0, settings.colors.primary);
+          gradient.addColorStop(1, settings.colors.secondary);
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = settings.colors.primary;
+        }
+        
+        ctx.fillRect(x, y, width, height);
+        
+      } else if (direction === 'both') {
+        // Stĺpce rastú nahor aj nadol zo stredu
+        const halfHeight = barHeight / 2;
+        
+        // Horná časť
+        const yUp = centerY - halfHeight;
+        const heightUp = halfHeight;
+        
+        // Dolná časť  
+        const yDown = centerY;
+        const heightDown = halfHeight;
+        
+        if (settings.colors.gradient) {
+          // Gradient pre hornú časť
+          const gradientUp = ctx.createLinearGradient(0, yUp, 0, yUp + heightUp);
+          gradientUp.addColorStop(0, settings.colors.primary);
+          gradientUp.addColorStop(1, settings.colors.secondary);
+          
+          // Gradient pre dolnú časť
+          const gradientDown = ctx.createLinearGradient(0, yDown, 0, yDown + heightDown);
+          gradientDown.addColorStop(0, settings.colors.secondary);
+          gradientDown.addColorStop(1, settings.colors.primary);
+          
+          // Kresli hornú časť
+          ctx.fillStyle = gradientUp;
+          ctx.fillRect(x, yUp, barWidth, heightUp);
+          
+          // Kresli dolnú časť
+          ctx.fillStyle = gradientDown;
+          ctx.fillRect(x, yDown, barWidth, heightDown);
+        } else {
+          ctx.fillStyle = settings.colors.primary;
+          // Kresli hornú časť
+          ctx.fillRect(x, yUp, barWidth, heightUp);
+          // Kresli dolnú časť
+          ctx.fillRect(x, yDown, barWidth, heightDown);
+        }
+      }
+    }
+  };
+
+  const renderDots = (ctx: CanvasRenderingContext2D, heights: number[], settings: any, startX: number, startY: number, endX: number, endY: number, canvasWidth: number, canvasHeight: number) => {
+    const direction = settings.renderStyle.direction;
+    const spacing = canvasWidth / heights.length;
+    const centerY = startY + (endY - startY) / 2;
+    
+    ctx.fillStyle = settings.colors.primary;
+    
+    for (let i = 0; i < heights.length; i++) {
+      const intensity = heights[i];
+      const x = startX + i * spacing;
+      const dotSize = Math.max(2, intensity / 20);
+      
+      if (direction === 'up') {
+        const y = endY - intensity;
+        ctx.beginPath();
+        ctx.arc(x, y, dotSize, 0, 2 * Math.PI);
+        ctx.fill();
+      } else if (direction === 'down') {
+        const y = startY + intensity;
+        ctx.beginPath();
+        ctx.arc(x, y, dotSize, 0, 2 * Math.PI);
+        ctx.fill();
+      } else if (direction === 'both') {
+        // Bodka hore
+        const yUp = centerY - intensity / 2;
+        ctx.beginPath();
+        ctx.arc(x, yUp, dotSize, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        // Bodka dole  
+        const yDown = centerY + intensity / 2;
+        ctx.beginPath();
+        ctx.arc(x, yDown, dotSize, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+  };
+
+  const renderLines = (ctx: CanvasRenderingContext2D, heights: number[], settings: any, startX: number, startY: number, endX: number, endY: number, canvasWidth: number, canvasHeight: number) => {
+    const direction = settings.renderStyle.direction;
+    const spacing = canvasWidth / heights.length;
+    const centerY = startY + (endY - startY) / 2;
+    
+    ctx.strokeStyle = settings.colors.primary;
+    ctx.lineWidth = 2;
+    
+    if (direction === 'up') {
+      ctx.beginPath();
+      for (let i = 0; i < heights.length; i++) {
+        const intensity = heights[i];
+        const x = startX + i * spacing;
+        const y = endY - intensity;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      
+    } else if (direction === 'down') {
+      ctx.beginPath();
+      for (let i = 0; i < heights.length; i++) {
+        const intensity = heights[i];
+        const x = startX + i * spacing;
+        const y = startY + intensity;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      
+    } else if (direction === 'both') {
+      // Horná čiara
+      ctx.beginPath();
+      for (let i = 0; i < heights.length; i++) {
+        const intensity = heights[i];
+        const x = startX + i * spacing;
+        const y = centerY - intensity / 2;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      
+      // Dolná čiara
+      ctx.beginPath();
+      for (let i = 0; i < heights.length; i++) {
+        const intensity = heights[i];
+        const x = startX + i * spacing;
+        const y = centerY + intensity / 2;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+  };
+
   return (
     <div className="relative w-full">
       <canvas
         ref={canvasRef}
         width={dimensions.width}
         height={dimensions.height}
-        className="w-full border border-white"
+        className="w-full border border-white cursor-pointer"
+        onClick={handleCanvasClick}
       />
       {!isPlaying && (
         <div className="absolute inset-0 flex items-center justify-center">
